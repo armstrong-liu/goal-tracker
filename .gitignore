@@ -1,0 +1,31 @@
+# 编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+gt
+gt.exe
+
+# 测试/构建输出
+dist/
+*.db
+*.db-journal
+
+# IDE 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Go 工作区
+vendor/
+
+# 个人数据（不提交本地目标数据）
+.goaltracker/

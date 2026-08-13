@@ -1,0 +1,12 @@
+# 统一换行符处理
+# Git 检入时统一存为 LF，检出时按系统转换
+* text=auto eol=lf
+
+# 二进制文件（不做换行符转换）
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.db binary
