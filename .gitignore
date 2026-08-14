@@ -8,9 +8,11 @@ gt
 gt.exe
 
 # 交叉编译产物（dist/ 由 build.sh 输出，本地直出的也排除）
+# 例外：gt-darwin-amd64 需要随仓库分发，允许提交
 gt-linux-*
 gt-darwin-*
 gt-windows-*
+!gt-darwin-amd64
 
 # 测试/构建输出
 dist/
