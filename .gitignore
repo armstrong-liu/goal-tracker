@@ -7,6 +7,11 @@
 gt
 gt.exe
 
+# 交叉编译产物（dist/ 由 build.sh 输出，本地直出的也排除）
+gt-linux-*
+gt-darwin-*
+gt-windows-*
+
 # 测试/构建输出
 dist/
 *.db

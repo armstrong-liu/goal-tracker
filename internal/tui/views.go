@@ -13,15 +13,28 @@ import (
 
 // ---------- 今日任务视图 ----------
 
-// taskColumns 定义今日任务表格的列。
-// 改变列只需改这里，渲染逻辑完全不用动。
-var taskColumns = []tableColumn{
-	{Title: "状态", Width: 5},
-	{Title: "ID", Width: 5},
-	{Title: "任务", Width: 28},
-	{Title: "截止", Width: 12},
-	{Title: "优先级", Width: 6},
-	{Title: "关联", Width: 8},
+// adaptiveTitleWidth 根据终端宽度计算标题列的可用宽度。
+// reserve = 除标题列外的固定占用（边框、padding、前缀、其他列、分隔符）。
+// 宽终端下标题尽量多显示，窄终端下保底 min，超长仍由截断 + 详情面板兜底。
+func adaptiveTitleWidth(termWidth, reserve, min int) int {
+	w := termWidth - reserve
+	if w < min {
+		w = min
+	}
+	return w
+}
+
+// taskColumnsForWidth 返回任务表格的列定义（标题列宽自适应终端）。
+// 固定占用：状态5 + ID5 + 截止12 + 优先级6 + 关联8 + 分隔符5 + 前缀2 + 内容框6 = 49。
+func taskColumnsForWidth(termWidth int) []tableColumn {
+	return []tableColumn{
+		{Title: "状态", Width: 5},
+		{Title: "ID", Width: 5},
+		{Title: "任务", Width: adaptiveTitleWidth(termWidth, 49, 20)},
+		{Title: "截止", Width: 12},
+		{Title: "优先级", Width: 6},
+		{Title: "关联", Width: 8},
+	}
 }
 
 func (m Model) renderTodayView() string {
@@ -66,7 +79,7 @@ func (m Model) renderTodayView() string {
 	}
 
 	// 一步渲染完整表格（表头 + 分隔线 + 数据行 + 选中高亮）
-	b.WriteString(renderTable(taskColumns, rows, m.today.cursor, defaultTableStyle))
+	b.WriteString(renderTable(taskColumnsForWidth(m.width), rows, m.today.cursor, defaultTableStyle))
 
 	return wrapInContentBox(b.String(), m.width)
 }
@@ -99,7 +112,7 @@ func (m Model) renderWeekView() string {
 
 	for i, wg := range weekGoals {
 		selected := i == m.week.cursor
-		b.WriteString(renderWeekGoalRow(wg, selected))
+		b.WriteString(renderWeekGoalRow(wg, selected, adaptiveTitleWidth(m.width, 52, 20)))
 		b.WriteString("\n")
 
 		// 选中时展开任务列表
@@ -119,7 +132,7 @@ func (m Model) renderWeekView() string {
 	return wrapInContentBox(b.String(), m.width)
 }
 
-func renderWeekGoalRow(wg store.WeekGoalWithProgress, selected bool) string {
+func renderWeekGoalRow(wg store.WeekGoalWithProgress, selected bool, titleW int) string {
 	icon := "🎯"
 	if wg.Status == model.WeekGoalStatusCompleted {
 		icon = "✅"
@@ -132,7 +145,7 @@ func renderWeekGoalRow(wg store.WeekGoalWithProgress, selected bool) string {
 	}
 
 	content := fmt.Sprintf("%s #%-3d %s    %s %s",
-		icon, wg.ID, fitWidth(wg.Title, 28), progress, detail)
+		icon, wg.ID, fitWidth(wg.Title, titleW), progress, detail)
 
 	if selected {
 		return " " + styleItemSelected.Render("▶ " + content)
@@ -168,14 +181,14 @@ func (m Model) renderQuarterView() string {
 
 	for i, qg := range quarterGoals {
 		selected := i == m.quarter.cursor
-		b.WriteString(renderQuarterGoalRow(qg, selected))
+		b.WriteString(renderQuarterGoalRow(qg, selected, adaptiveTitleWidth(m.width, 56, 20)))
 		b.WriteString("\n")
 	}
 
 	return wrapInContentBox(b.String(), m.width)
 }
 
-func renderQuarterGoalRow(qg store.QuarterGoalWithProgress, selected bool) string {
+func renderQuarterGoalRow(qg store.QuarterGoalWithProgress, selected bool, titleW int) string {
 	icon := goalStatusIcon(qg.Status)
 	progress := progressBar(qg.Progress(), 10)
 	detail := ""
@@ -184,7 +197,7 @@ func renderQuarterGoalRow(qg store.QuarterGoalWithProgress, selected bool) strin
 	}
 
 	content := fmt.Sprintf("%s #%-3d %s    %s %s",
-		icon, qg.ID, fitWidth(qg.Title, 28), progress, detail)
+		icon, qg.ID, fitWidth(qg.Title, titleW), progress, detail)
 
 	if selected {
 		return " " + styleItemSelected.Render("▶ " + content)
@@ -219,14 +232,14 @@ func (m Model) renderYearView() string {
 
 	for i, yg := range yearGoals {
 		selected := i == m.year.cursor
-		b.WriteString(renderYearGoalRow(yg, selected))
+		b.WriteString(renderYearGoalRow(yg, selected, adaptiveTitleWidth(m.width, 58, 20)))
 		b.WriteString("\n")
 	}
 
 	return wrapInContentBox(b.String(), m.width)
 }
 
-func renderYearGoalRow(yg store.YearGoalWithProgress, selected bool) string {
+func renderYearGoalRow(yg store.YearGoalWithProgress, selected bool, titleW int) string {
 	icon := goalStatusIcon(yg.Status)
 	progress := progressBar(yg.Progress(), 10)
 	detail := ""
@@ -235,7 +248,7 @@ func renderYearGoalRow(yg store.YearGoalWithProgress, selected bool) string {
 	}
 
 	content := fmt.Sprintf("%s #%-3d %s    %s %s",
-		icon, yg.ID, fitWidth(yg.Title, 28), progress, detail)
+		icon, yg.ID, fitWidth(yg.Title, titleW), progress, detail)
 
 	if selected {
 		return " " + styleItemSelected.Render("▶ " + content)

@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
 
+	"goal-tracker/internal/model"
 	"goal-tracker/internal/store"
 	"goal-tracker/internal/util"
 )
@@ -56,6 +57,9 @@ type Model struct {
 	textInput textinput.Model
 	pendingID int64 // 待操作的任务/目标 ID
 
+	// 详情面板：Enter 打开，Esc 关闭
+	showDetail bool
+
 	// 消息（短暂提示，操作后显示）
 	message string
 }
@@ -103,6 +107,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// 如果详情面板打开，任意导航键关闭面板（q 不退出程序，只关面板）
+		if m.showDetail {
+			m.showDetail = false
+			return m, nil
+		}
+
 		// 如果处于输入模式，按键交给输入框处理
 		if m.mode != inputNone {
 			return m.handleInputMode(msg)
@@ -144,8 +154,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// 光标下移上限由视图数据条数决定（view 渲染时处理）
 			m.curState().cursor++
 			m.message = ""
-		case " ", "enter":
-			return m.handleAction()
+		case " ":
+			return m.handleToggle()
+		case "enter":
+			// Enter 打开当前选中项的详情面板（查看完整标题）
+			m.message = ""
+			m.showDetail = true
+			return m, nil
 		case "a":
 			return m.startAddTask()
 		case "x":
@@ -181,8 +196,11 @@ func (m Model) View() string {
 		content = m.renderYearView()
 	}
 
-	// 输入面板（如果激活）
-	if m.mode != inputNone {
+	// 详情面板（如果打开）：替换主内容区，聚焦查看完整信息
+	if m.showDetail {
+		content = m.renderDetailPanel()
+	} else if m.mode != inputNone {
+		// 输入面板（如果激活）
 		content = lipgloss.JoinVertical(lipgloss.Left,
 			content,
 			"",
@@ -266,9 +284,12 @@ func (m Model) renderTabs() string {
 
 func (m Model) renderStatusBar() string {
 	var hint string
-	if m.mode == inputNone {
-		hint = "[j/k]移动  [Space]完成  [a]添加  [x]删除  [Tab]切换  [?]帮助  [q]退出"
-	} else {
+	switch {
+	case m.showDetail:
+		hint = "[Esc/Enter/任意键] 关闭详情"
+	case m.mode == inputNone:
+		hint = "[j/k]移动  [Space]完成  [Enter]详情  [a]添加  [x]删除  [Tab]切换  [?]帮助  [q]退出"
+	default:
 		hint = "[Enter]确认  [Esc]取消"
 	}
 	left := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Render(hint)
@@ -381,19 +402,31 @@ func (m Model) confirmInput() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleAction 处理 Space/Enter 键：在今日视图切换任务状态。
-func (m Model) handleAction() (tea.Model, tea.Cmd) {
-	if m.activeTab != tabToday {
-		// 其他视图暂不处理 Space（v1.0 简化）
-		return m, nil
+// handleToggle 处理 Space 键：切换当前视图选中项的完成状态。
+// 今日视图切换任务，周/季/年视图切换对应目标。
+func (m Model) handleToggle() (tea.Model, tea.Cmd) {
+	switch m.activeTab {
+	case tabToday:
+		return m.toggleTask()
+	case tabWeek:
+		return m.toggleWeekGoal()
+	case tabQuarter:
+		return m.toggleQuarterGoal()
+	case tabYear:
+		return m.toggleYearGoal()
 	}
+	return m, nil
+}
+
+// toggleTask 切换任务完成状态（今日视图）。
+func (m Model) toggleTask() (tea.Model, tea.Cmd) {
 	task, ok := m.selectedTask()
 	if !ok {
 		return m, nil
 	}
-	newStatus := "pending"
-	if task.Status == "pending" {
-		newStatus = "done"
+	newStatus := model.TaskStatusPending
+	if task.Status == model.TaskStatusPending {
+		newStatus = model.TaskStatusDone
 	}
 	_, err := m.store.SetTaskStatus(task.ID, newStatus)
 	if err != nil {
@@ -401,10 +434,85 @@ func (m Model) handleAction() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.today.refresh = true
-	if newStatus == "done" {
+	if newStatus == model.TaskStatusDone {
 		m.message = "✓ 已完成"
 	} else {
 		m.message = "↩ 已恢复"
+	}
+	return m, nil
+}
+
+// toggleWeekGoal 切换周目标完成状态（active ↔ completed）。
+func (m Model) toggleWeekGoal() (tea.Model, tea.Cmd) {
+	wg, ok := m.selectedWeekGoal()
+	if !ok {
+		m.message = "没有选中的周目标"
+		return m, nil
+	}
+	newStatus := model.WeekGoalStatusActive
+	if wg.Status == model.WeekGoalStatusActive {
+		newStatus = model.WeekGoalStatusCompleted
+	}
+	_, err := m.store.SetWeekGoalStatus(wg.ID, newStatus)
+	if err != nil {
+		m.message = err.Error()
+		return m, nil
+	}
+	m.week.refresh = true
+	if newStatus == model.WeekGoalStatusCompleted {
+		m.message = "✓ 周目标已完成"
+	} else {
+		m.message = "↩ 周目标已恢复"
+	}
+	return m, nil
+}
+
+// toggleQuarterGoal 切换季度目标完成状态。
+func (m Model) toggleQuarterGoal() (tea.Model, tea.Cmd) {
+	qg, ok := m.selectedQuarterGoal()
+	if !ok {
+		m.message = "没有选中的季度目标"
+		return m, nil
+	}
+	newStatus := model.QuarterGoalStatusActive
+	if qg.Status == model.QuarterGoalStatusActive {
+		newStatus = model.QuarterGoalStatusCompleted
+	}
+	_, err := m.store.SetQuarterGoalStatus(qg.ID, newStatus)
+	if err != nil {
+		m.message = err.Error()
+		return m, nil
+	}
+	m.quarter.refresh = true
+	if newStatus == model.QuarterGoalStatusCompleted {
+		m.message = "✓ 季度目标已完成"
+	} else {
+		m.message = "↩ 季度目标已恢复"
+	}
+	return m, nil
+}
+
+// toggleYearGoal 切换年度目标完成状态。
+func (m Model) toggleYearGoal() (tea.Model, tea.Cmd) {
+	yg, ok := m.selectedYearGoal()
+	if !ok {
+		m.message = "没有选中的年度目标"
+		return m, nil
+	}
+	newStatus := model.YearGoalStatusActive
+	if yg.Status == model.YearGoalStatusActive {
+		newStatus = model.YearGoalStatusCompleted
+	}
+	_, err := m.store.SetYearGoalStatus(yg.ID, newStatus)
+	if err != nil {
+		m.message = err.Error()
+		return m, nil
+	}
+	m.year.refresh = true
+	if newStatus == model.YearGoalStatusCompleted {
+		m.message = "✓ 年度目标已完成"
+	} else {
+		m.message = "↩ 年度目标已恢复"
 	}
 	return m, nil
 }
@@ -422,6 +530,129 @@ func (m Model) renderInputPanel() string {
 			styleInputLabel.Render(label),
 			m.textInput.View(),
 		),
+	)
+}
+
+// renderDetailPanel 渲染详情面板：完整显示选中项的所有字段。
+// 核心价值：标题不截断，且显示上级目标的完整标题。
+func (m Model) renderDetailPanel() string {
+	var lines []string
+
+	switch m.activeTab {
+	case tabToday:
+		if t, ok := m.selectedTask(); ok {
+			due := "无"
+			if t.DueDate != nil {
+				due = util.FormatDate(*t.DueDate)
+			}
+			ref := "无"
+			if t.WeekGoalID != nil {
+				ref = fmt.Sprintf("周目标 #%d", *t.WeekGoalID)
+				if wg, _ := m.store.GetWeekGoal(*t.WeekGoalID); wg != nil {
+					ref += fmt.Sprintf("：%s", wg.Title)
+				}
+			}
+			lines = []string{
+				styleInputLabel.Render("📝 任务详情"),
+				"",
+				"标题：  " + t.Title,
+				fmt.Sprintf("ID：    #%d", t.ID),
+				"状态：  " + statusLabel(t.Status),
+				"优先级：" + priorityLabel(t.Priority),
+				"截止：  " + due,
+				"关联：  " + ref,
+				"创建：  " + t.CreatedAt.Format("2006-01-02 15:04"),
+			}
+		}
+
+	case tabWeek:
+		if wg, ok := m.selectedWeekGoal(); ok {
+			pct := "—（未关联任务）"
+			if p := wg.Progress(); p >= 0 {
+				pct = fmt.Sprintf("%d%%（%d/%d）", p, wg.TaskDone, wg.TaskTotal)
+			}
+			upper := "无"
+			if wg.QuarterGoalID != nil {
+				upper = fmt.Sprintf("季度目标 #%d", *wg.QuarterGoalID)
+				if qg, _ := m.store.GetQuarterGoal(*wg.QuarterGoalID); qg != nil {
+					upper += fmt.Sprintf("：%s", qg.Title)
+				}
+			}
+			lines = []string{
+				styleInputLabel.Render("📅 周目标详情"),
+				"",
+				"标题：  " + wg.Title,
+				fmt.Sprintf("ID：    #%d", wg.ID),
+				"周期：  " + util.WeekLabel(wg.Year, wg.Week),
+				"状态：  " + statusLabel(wg.Status),
+				"进度：  " + pct,
+				"上级：  " + upper,
+				"创建：  " + wg.CreatedAt.Format("2006-01-02 15:04"),
+			}
+		}
+
+	case tabQuarter:
+		if qg, ok := m.selectedQuarterGoal(); ok {
+			pct := "—（未关联周目标）"
+			if p := qg.Progress(); p >= 0 {
+				pct = fmt.Sprintf("%d%%（%d/%d 周）", p, qg.WeekDone, qg.WeekTotal)
+			}
+			upper := "无"
+			if qg.YearGoalID != nil {
+				upper = fmt.Sprintf("年度目标 #%d", *qg.YearGoalID)
+				if yg, _ := m.store.GetYearGoal(*qg.YearGoalID); yg != nil {
+					upper += fmt.Sprintf("：%s", yg.Title)
+				}
+			}
+			lines = []string{
+				styleInputLabel.Render("🏆 季度目标详情"),
+				"",
+				"标题：  " + qg.Title,
+				fmt.Sprintf("ID：    #%d", qg.ID),
+				"周期：  " + util.QuarterLabel(qg.Year, qg.Quarter),
+				"状态：  " + statusLabel(qg.Status),
+				"进度：  " + pct,
+				"上级：  " + upper,
+				"创建：  " + qg.CreatedAt.Format("2006-01-02 15:04"),
+			}
+			if qg.Description != "" {
+				lines = append(lines, "描述：  "+qg.Description)
+			}
+		}
+
+	case tabYear:
+		if yg, ok := m.selectedYearGoal(); ok {
+			pct := "—（未关联季度目标）"
+			if p := yg.Progress(); p >= 0 {
+				pct = fmt.Sprintf("%d%%（%d/%d 季度）", p, yg.QuarterDone, yg.QuarterTotal)
+			}
+			lines = []string{
+				styleInputLabel.Render("🎯 年度目标详情"),
+				"",
+				"标题：  " + yg.Title,
+				fmt.Sprintf("ID：    #%d", yg.ID),
+				fmt.Sprintf("周期：  %d 年", yg.Year),
+				"状态：  " + statusLabel(yg.Status),
+				"进度：  " + pct,
+				"创建：  " + yg.CreatedAt.Format("2006-01-02 15:04"),
+			}
+			if yg.Description != "" {
+				lines = append(lines, "描述：  "+yg.Description)
+			}
+		}
+	}
+
+	if lines == nil {
+		lines = []string{styleHint.Render("（没有选中项）")}
+	}
+
+	// 面板宽度跟随终端，超长标题自动换行（不会截断）
+	panelWidth := m.width - 8
+	if panelWidth < 40 {
+		panelWidth = 40
+	}
+	return styleInputBox.Width(panelWidth).Render(
+		lipgloss.JoinVertical(lipgloss.Left, lines...),
 	)
 }
 

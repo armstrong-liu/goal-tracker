@@ -46,6 +46,61 @@ func (m Model) selectedTaskID() (int64, bool) {
 	return t.ID, true
 }
 
+// selectedWeekGoal 返回周目标视图中当前选中的周目标（含进度）。
+func (m Model) selectedWeekGoal() (store.WeekGoalWithProgress, bool) {
+	y, w := util.ISOWeek(utilNow())
+	list, err := m.store.ListWeekGoalsWithProgress(store.WeekGoalFilter{Year: y, Week: w})
+	if err != nil || len(list) == 0 {
+		return store.WeekGoalWithProgress{}, false
+	}
+	if m.week.cursor < 0 || m.week.cursor >= len(list) {
+		return store.WeekGoalWithProgress{}, false
+	}
+	return list[m.week.cursor], true
+}
+
+// selectedQuarterGoal 返回季度目标视图中当前选中的季度目标（含进度）。
+func (m Model) selectedQuarterGoal() (store.QuarterGoalWithProgress, bool) {
+	now := utilNow()
+	list, err := m.store.ListQuarterGoalsWithProgress(store.QuarterGoalFilter{
+		Year: now.Year(), Quarter: util.CurrentQuarter(now),
+	})
+	if err != nil || len(list) == 0 {
+		return store.QuarterGoalWithProgress{}, false
+	}
+	if m.quarter.cursor < 0 || m.quarter.cursor >= len(list) {
+		return store.QuarterGoalWithProgress{}, false
+	}
+	return list[m.quarter.cursor], true
+}
+
+// selectedYearGoal 返回年度目标视图中当前选中的年度目标（含进度）。
+func (m Model) selectedYearGoal() (store.YearGoalWithProgress, bool) {
+	now := utilNow()
+	list, err := m.store.ListYearGoalsWithProgress(store.YearGoalFilter{Year: now.Year()})
+	if err != nil || len(list) == 0 {
+		return store.YearGoalWithProgress{}, false
+	}
+	if m.year.cursor < 0 || m.year.cursor >= len(list) {
+		return store.YearGoalWithProgress{}, false
+	}
+	return list[m.year.cursor], true
+}
+
+// statusLabel 把状态值转为中文标签（用于详情面板显示）。
+func statusLabel(status string) string {
+	switch status {
+	case "pending":
+		return "待办"
+	case "done", "completed":
+		return "已完成"
+	case "archived":
+		return "已归档"
+	default:
+		return "进行中"
+	}
+}
+
 // formatDateLabel 渲染截止日期标签（固定宽度，便于对齐）。
 func formatDateLabel(due *time.Time, now time.Time) string {
 	if due == nil {
