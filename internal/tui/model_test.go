@@ -171,8 +171,8 @@ func TestModel_AddTask(t *testing.T) {
 	// 按 a 进入输入模式
 	updated, _ := m.Update(keyMsg("a"))
 	m = updated.(Model)
-	if m.mode != inputAddTask {
-		t.Fatal("按 a 后应进入 inputAddTask 模式")
+	if m.mode != inputAdd {
+		t.Fatal("按 a 后应进入 inputAdd 模式")
 	}
 
 	// 模拟输入标题
@@ -204,8 +204,8 @@ func TestModel_DeleteTask(t *testing.T) {
 	// 光标在第一个任务上
 	updated, _ := m.Update(keyMsg("x"))
 	m = updated.(Model)
-	if m.mode != inputDeleteTask {
-		t.Fatal("按 x 后应进入 inputDeleteTask 模式")
+	if m.mode != inputDelete {
+		t.Fatal("按 x 后应进入 inputDelete 模式")
 	}
 
 	// 输入 y 确认

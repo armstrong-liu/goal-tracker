@@ -48,6 +48,30 @@ func (m Model) selectedTaskID() (int64, bool) {
 	return t.ID, true
 }
 
+// selectedItem 返回当前视图选中项的（类型, ID, 标题）。
+// 四个视图统一入口，供删除等操作使用。
+func (m Model) selectedItem() (itemKind, int64, string, bool) {
+	switch m.activeTab {
+	case tabToday:
+		if t, ok := m.selectedTask(); ok {
+			return kindTask, t.ID, t.Title, true
+		}
+	case tabWeek:
+		if wg, ok := m.selectedWeekGoal(); ok {
+			return kindWeekGoal, wg.ID, wg.Title, true
+		}
+	case tabQuarter:
+		if qg, ok := m.selectedQuarterGoal(); ok {
+			return kindQuarterGoal, qg.ID, qg.Title, true
+		}
+	case tabYear:
+		if yg, ok := m.selectedYearGoal(); ok {
+			return kindYearGoal, yg.ID, yg.Title, true
+		}
+	}
+	return kindTask, 0, "", false
+}
+
 // displayedWeek 返回周视图当前显示的 ISO (年, 周)，受 weekOffset 影响。
 // offset=0 当前周，+1 下一周，-1 上一周。
 func (m Model) displayedWeek() (int, int) {

@@ -31,10 +31,36 @@ var tabNames = []string{"今日任务", "本周目标", "季度目标", "年度�
 type inputMode int
 
 const (
-	inputNone inputMode = iota
-	inputAddTask    // 添加任务
-	inputDeleteTask // 删除确认
+	inputNone   inputMode = iota
+	inputAdd    // 添加（类型由 pendingKind 决定：任务/周/季/年目标）
+	inputDelete // 删除确认（类型由 pendingKind 决定）
 )
+
+// itemKind 表示 TUI 中操作的条目类型（任务或各级目标）。
+type itemKind int
+
+const (
+	kindTask itemKind = iota
+	kindWeekGoal
+	kindQuarterGoal
+	kindYearGoal
+)
+
+// kindLabel 返回类型的中文标签（用于提示与确认面板）。
+func kindLabel(k itemKind) string {
+	switch k {
+	case kindTask:
+		return "任务"
+	case kindWeekGoal:
+		return "周目标"
+	case kindQuarterGoal:
+		return "季度目标"
+	case kindYearGoal:
+		return "年度目标"
+	default:
+		return "条目"
+	}
+}
 
 // ---------- 主 Model ----------
 
@@ -53,9 +79,11 @@ type Model struct {
 	year    *listState
 
 	// 输入模式
-	mode     inputMode
+	mode      inputMode
 	textInput textinput.Model
-	pendingID int64 // 待操作的任务/目标 ID
+	pendingID    int64     // 待操作的条目 ID（删除确认用）
+	pendingKind  itemKind  // 待操作/待创建的条目类型
+	pendingTitle string    // 待删除条目的标题（确认面板展示，防误删）
 
 	// 详情面板：Enter 打开，Esc 关闭
 	showDetail bool
@@ -189,7 +217,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showDetail = true
 			return m, nil
 		case "a":
-			return m.startAddTask()
+			return m.startAdd()
 		case "x":
 			return m.startDelete()
 		}
@@ -358,29 +386,56 @@ func (m Model) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// startAddTask 进入添加任务模式。
-func (m Model) startAddTask() (tea.Model, tea.Cmd) {
-	// 只在"今日任务"视图支持添加（v1.0 简化）
-	if m.activeTab != tabToday {
-		m.message = "添加任务请在「今日任务」视图操作"
-		return m, nil
+// kindForTab 返回当前视图对应的条目类型。
+func kindForTab(t tabID) itemKind {
+	switch t {
+	case tabWeek:
+		return kindWeekGoal
+	case tabQuarter:
+		return kindQuarterGoal
+	case tabYear:
+		return kindYearGoal
+	default:
+		return kindTask
 	}
-	m.mode = inputAddTask
+}
+
+// stateForKind 返回类型对应的列表状态（用于刷新与光标调整）。
+func (m *Model) stateForKind(k itemKind) *listState {
+	switch k {
+	case kindTask:
+		return m.today
+	case kindWeekGoal:
+		return m.week
+	case kindQuarterGoal:
+		return m.quarter
+	default:
+		return m.year
+	}
+}
+
+// startAdd 进入添加模式：按当前视图创建对应类型。
+// 任务无周期；目标默认落在"当前显示期"（受 ←/→ 导航影响）。
+func (m Model) startAdd() (tea.Model, tea.Cmd) {
+	m.mode = inputAdd
+	m.pendingKind = kindForTab(m.activeTab)
 	m.textInput.Reset()
-	m.textInput.Placeholder = "输入任务标题，回车确认"
+	m.textInput.Placeholder = fmt.Sprintf("输入%s标题，回车确认", kindLabel(m.pendingKind))
 	m.textInput.Focus()
 	return m, textinput.Blink
 }
 
-// startDelete 进入删除确认模式。
+// startDelete 进入删除确认模式：删除当前视图选中的条目。
 func (m Model) startDelete() (tea.Model, tea.Cmd) {
-	id, ok := m.selectedTaskID()
+	kind, id, title, ok := m.selectedItem()
 	if !ok {
 		m.message = "没有选中的项"
 		return m, nil
 	}
-	m.mode = inputDeleteTask
+	m.mode = inputDelete
+	m.pendingKind = kind
 	m.pendingID = id
+	m.pendingTitle = title
 	m.textInput.Reset()
 	m.textInput.Placeholder = "输入 y 确认删除，n 取消"
 	m.textInput.Focus()
@@ -392,7 +447,7 @@ func (m Model) confirmInput() (tea.Model, tea.Cmd) {
 	// 注意：值接收者，defer 修改的是副本，对返回值无效。
 	// 所以在每个 return 前显式重置 mode。
 	switch m.mode {
-	case inputAddTask:
+	case inputAdd:
 		title := strings.TrimSpace(m.textInput.Value())
 		if title == "" {
 			m.message = "标题不能为空"
@@ -400,20 +455,19 @@ func (m Model) confirmInput() (tea.Model, tea.Cmd) {
 			m.textInput.Blur()
 			return m, nil
 		}
-		_, err := m.store.CreateTask(store.CreateTaskInput{Title: title})
-		if err != nil {
+		if err := m.createItem(m.pendingKind, title); err != nil {
 			m.message = "添加失败：" + err.Error()
 			m.mode = inputNone
 			m.textInput.Blur()
 			return m, nil
 		}
-		m.today.refresh = true
-		m.message = "✓ 已添加任务：" + title
+		m.stateForKind(m.pendingKind).refresh = true
+		m.message = "✓ 已添加" + kindLabel(m.pendingKind) + "：" + title
 		m.mode = inputNone
 		m.textInput.Blur()
 		return m, nil
 
-	case inputDeleteTask:
+	case inputDelete:
 		ans := strings.ToLower(strings.TrimSpace(m.textInput.Value()))
 		if ans != "y" && ans != "yes" {
 			m.message = "已取消删除"
@@ -421,20 +475,58 @@ func (m Model) confirmInput() (tea.Model, tea.Cmd) {
 			m.textInput.Blur()
 			return m, nil
 		}
-		ok, _ := m.store.DeleteTask(m.pendingID)
-		if ok {
-			m.message = "✓ 已删除任务"
-			m.today.refresh = true
-			if m.today.cursor > 0 {
-				m.today.cursor--
+		ok, err := m.deleteItem(m.pendingKind, m.pendingID)
+		if err != nil {
+			m.message = "删除失败：" + err.Error()
+		} else if ok {
+			m.message = "✓ 已删除" + kindLabel(m.pendingKind)
+			state := m.stateForKind(m.pendingKind)
+			state.refresh = true
+			if state.cursor > 0 {
+				state.cursor--
 			}
 		} else {
-			m.message = "删除失败：任务不存在"
+			m.message = "删除失败：" + kindLabel(m.pendingKind) + "不存在"
 		}
 		m.mode = inputNone
 		m.textInput.Blur()
 	}
 	return m, nil
+}
+
+// createItem 按类型创建条目。目标落在当前显示期（受导航偏移影响）。
+func (m Model) createItem(kind itemKind, title string) error {
+	now := utilNow()
+	switch kind {
+	case kindTask:
+		_, err := m.store.CreateTask(store.CreateTaskInput{Title: title})
+		return err
+	case kindWeekGoal:
+		y, w := m.displayedWeek()
+		_, err := m.store.CreateWeekGoal(store.CreateWeekGoalInput{Title: title, Year: y, Week: w})
+		return err
+	case kindQuarterGoal:
+		y, q := m.displayedQuarter()
+		_, err := m.store.CreateQuarterGoal(store.CreateQuarterGoalInput{Title: title, Year: y, Quarter: q})
+		return err
+	default: // kindYearGoal
+		_, err := m.store.CreateYearGoal(store.CreateYearGoalInput{Title: title, Year: now.Year()})
+		return err
+	}
+}
+
+// deleteItem 按类型删除条目。
+func (m Model) deleteItem(kind itemKind, id int64) (bool, error) {
+	switch kind {
+	case kindTask:
+		return m.store.DeleteTask(id)
+	case kindWeekGoal:
+		return m.store.DeleteWeekGoal(id)
+	case kindQuarterGoal:
+		return m.store.DeleteQuarterGoal(id)
+	default:
+		return m.store.DeleteYearGoal(id)
+	}
 }
 
 // handleToggle 处理 Space 键：切换当前视图选中项的完成状态。
@@ -555,10 +647,12 @@ func (m Model) toggleYearGoal() (tea.Model, tea.Cmd) {
 func (m Model) renderInputPanel() string {
 	var label string
 	switch m.mode {
-	case inputAddTask:
-		label = "➕ 新任务"
-	case inputDeleteTask:
-		label = fmt.Sprintf("🗑️  确认删除任务 #%d？(y/n)", m.pendingID)
+	case inputAdd:
+		label = fmt.Sprintf("➕ 新%s", kindLabel(m.pendingKind))
+	case inputDelete:
+		// 显示标题防止误删
+		label = fmt.Sprintf("🗑️  确认删除%s #%d：%s (y/n)",
+			kindLabel(m.pendingKind), m.pendingID, m.pendingTitle)
 	}
 	return styleInputBox.Render(
 		lipgloss.JoinVertical(lipgloss.Left,
