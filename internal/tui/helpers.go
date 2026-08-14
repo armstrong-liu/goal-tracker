@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -46,9 +48,45 @@ func (m Model) selectedTaskID() (int64, bool) {
 	return t.ID, true
 }
 
+// displayedWeek 返回周视图当前显示的 ISO (年, 周)，受 weekOffset 影响。
+// offset=0 当前周，+1 下一周，-1 上一周。
+func (m Model) displayedWeek() (int, int) {
+	t := utilNow().AddDate(0, 0, 7*m.weekOffset)
+	return util.ISOWeek(t)
+}
+
+// displayedQuarter 返回季度视图当前显示的 (年, 季度)，受 quarterOffset 影响。
+// 通过"总季度数"做算术，正确处理跨年（如 Q4 + 1 = 次年 Q1）。
+func (m Model) displayedQuarter() (int, int) {
+	now := utilNow()
+	totalQ := now.Year()*4 + (util.CurrentQuarter(now) - 1) + m.quarterOffset
+	return totalQ / 4, totalQ%4 + 1
+}
+
+// quarterYearDistribution 返回某年各季度的目标分布，如 "Q2: 3 · Q3: 3"。
+// 只列出有目标的季度；全年无目标返回空串。
+func (m Model) quarterYearDistribution(year int) string {
+	all, err := m.store.ListQuarterGoals(store.QuarterGoalFilter{Year: year})
+	if err != nil || len(all) == 0 {
+		return ""
+	}
+	counts := make(map[int]int)
+	for _, qg := range all {
+		counts[qg.Quarter]++
+	}
+	var parts []string
+	for q := 1; q <= 4; q++ {
+		if counts[q] > 0 {
+			parts = append(parts, fmt.Sprintf("Q%d: %d", q, counts[q]))
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
 // selectedWeekGoal 返回周目标视图中当前选中的周目标（含进度）。
+// 跟随 weekOffset：切换周后 Space/Enter 作用于显示中的周。
 func (m Model) selectedWeekGoal() (store.WeekGoalWithProgress, bool) {
-	y, w := util.ISOWeek(utilNow())
+	y, w := m.displayedWeek()
 	list, err := m.store.ListWeekGoalsWithProgress(store.WeekGoalFilter{Year: y, Week: w})
 	if err != nil || len(list) == 0 {
 		return store.WeekGoalWithProgress{}, false
@@ -60,10 +98,11 @@ func (m Model) selectedWeekGoal() (store.WeekGoalWithProgress, bool) {
 }
 
 // selectedQuarterGoal 返回季度目标视图中当前选中的季度目标（含进度）。
+// 跟随 quarterOffset。
 func (m Model) selectedQuarterGoal() (store.QuarterGoalWithProgress, bool) {
-	now := utilNow()
+	y, q := m.displayedQuarter()
 	list, err := m.store.ListQuarterGoalsWithProgress(store.QuarterGoalFilter{
-		Year: now.Year(), Quarter: util.CurrentQuarter(now),
+		Year: y, Quarter: q,
 	})
 	if err != nil || len(list) == 0 {
 		return store.QuarterGoalWithProgress{}, false

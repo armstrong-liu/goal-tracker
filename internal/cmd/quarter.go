@@ -83,7 +83,11 @@ var (
 
 var quarterViewCmd = &cobra.Command{
 	Use:   "view",
-	Short: "查看季度目标（含周目标进度）",
+	Short: "查看季度目标（默认全年分组显示）",
+	Long: `查看季度目标及其进度。
+
+默认显示该年所有季度的目标（按季度分组，当前季度高亮标注）。
+用 -q 指定季度则只看该季度。`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		s, err := openStore()
 		if err != nil {
@@ -93,30 +97,78 @@ var quarterViewCmd = &cobra.Command{
 
 		now := time.Now()
 		y := now.Year()
-		q := util.CurrentQuarter(now)
 		if cmd.Flags().Changed("year") {
 			y = quarterViewYear
 		}
+
+		// 指定了 -q：只看该季度（原行为）
 		if cmd.Flags().Changed("quarter") {
-			q = quarterViewQuarter
+			return renderSingleQuarter(s, y, quarterViewQuarter)
 		}
 
-		list, err := s.ListQuarterGoalsWithProgress(store.QuarterGoalFilter{Year: y, Quarter: q})
-		if err != nil {
-			return err
-		}
+		// 未指定：全年按季度分组
+		return renderGroupedQuarters(s, y, now)
+	},
+}
 
-		PrintTitle(fmt.Sprintf("🏆 %s 季度目标（%d 项）", util.QuarterLabel(y, q), len(list)))
+// renderSingleQuarter 渲染单个季度的目标列表。
+func renderSingleQuarter(s *store.Store, year, quarter int) error {
+	list, err := s.ListQuarterGoalsWithProgress(store.QuarterGoalFilter{Year: year, Quarter: quarter})
+	if err != nil {
+		return err
+	}
+	PrintTitle(fmt.Sprintf("🏆 %s 季度目标（%d 项）", util.QuarterLabel(year, quarter), len(list)))
+	if len(list) == 0 {
+		PrintSubtitle("（本季度还没有目标，用 'gt quarter add \"目标\"' 添加）")
+		return nil
+	}
+	fmt.Println()
+	for _, qg := range list {
+		printQuarterGoalWithWeeks(qg)
+	}
+	return nil
+}
+
+// renderGroupedQuarters 渲染全年季度目标，按季度分组，当前季度标注。
+func renderGroupedQuarters(s *store.Store, year int, now time.Time) error {
+	all, err := s.ListQuarterGoalsWithProgress(store.QuarterGoalFilter{Year: year})
+	if err != nil {
+		return err
+	}
+
+	// 按季度分组
+	groups := make(map[int][]store.QuarterGoalWithProgress)
+	for _, qg := range all {
+		groups[qg.Quarter] = append(groups[qg.Quarter], qg)
+	}
+
+	currentQ := util.CurrentQuarter(now)
+	PrintTitle(fmt.Sprintf("🏆 %d 年度季度目标（共 %d 项，分布于 %d 个季度）",
+		year, len(all), len(groups)))
+	if len(all) == 0 {
+		PrintSubtitle(fmt.Sprintf("（%d 年还没有季度目标，用 'gt quarter add \"目标\"' 添加）", year))
+		return nil
+	}
+	fmt.Println()
+
+	for q := 1; q <= 4; q++ {
+		list := groups[q]
 		if len(list) == 0 {
-			PrintSubtitle("（本季度还没有目标，用 'gt quarter add' 添加）")
-			return nil
+			continue
 		}
+		// 季度标题：当前季度高亮标注
+		header := fmt.Sprintf("Q%d（%d 项）", q, len(list))
+		if q == currentQ {
+			header += "  ← 当前"
+		}
+		PrintTitle(header)
 		fmt.Println()
 		for _, qg := range list {
 			printQuarterGoalWithWeeks(qg)
 		}
-		return nil
-	},
+		fmt.Println()
+	}
+	return nil
 }
 
 func printQuarterGoalWithWeeks(qg store.QuarterGoalWithProgress) {

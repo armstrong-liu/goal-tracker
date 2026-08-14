@@ -87,14 +87,18 @@ func (m Model) renderTodayView() string {
 // ---------- 周目标视图 ----------
 
 func (m Model) renderWeekView() string {
-	now := utilNow()
-	y, w := util.ISOWeek(now)
+	y, w := m.displayedWeek()
 
 	weekGoals, err := m.store.ListWeekGoalsWithProgress(store.WeekGoalFilter{Year: y, Week: w})
 	if err != nil || len(weekGoals) == 0 {
-		return wrapInContentBox(renderEmptyBody("📅 本周目标",
-			"本周还没有目标",
-			"用 'gt week add \"目标\"' 在命令行添加"), m.width)
+		// 非当前周时给出导航提示
+		msg := "本周还没有目标"
+		hint := "用 'gt week add \"目标\"' 在命令行添加"
+		if m.weekOffset != 0 {
+			msg = "该周没有目标"
+			hint = "按 ←/→ 切换周"
+		}
+		return wrapInContentBox(renderEmptyBody("📅 周目标", msg, hint), m.width)
 	}
 
 	// 光标范围
@@ -106,9 +110,14 @@ func (m Model) renderWeekView() string {
 	}
 
 	var b strings.Builder
+	// 当前周标注
+	marker := ""
+	if m.weekOffset == 0 {
+		marker = lipgloss.NewStyle().Foreground(colorSuccess).Bold(true).Render("（本周）")
+	}
 	title := lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("📅 %s 周目标", util.WeekLabel(y, w)))
 	count := mutedStr(fmt.Sprintf("（%d 项）", len(weekGoals)))
-	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Left, title, " ", count) + "\n\n")
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Left, title, count, marker) + "\n\n")
 
 	for i, wg := range weekGoals {
 		selected := i == m.week.cursor
@@ -156,15 +165,17 @@ func renderWeekGoalRow(wg store.WeekGoalWithProgress, selected bool, titleW int)
 // ---------- 季度目标视图 ----------
 
 func (m Model) renderQuarterView() string {
-	now := utilNow()
-	y := now.Year()
-	q := util.CurrentQuarter(now)
+	y, q := m.displayedQuarter()
 
 	quarterGoals, err := m.store.ListQuarterGoalsWithProgress(store.QuarterGoalFilter{Year: y, Quarter: q})
 	if err != nil || len(quarterGoals) == 0 {
-		return wrapInContentBox(renderEmptyBody("🏆 季度目标",
-			"本季度还没有目标",
-			"用 'gt quarter add \"目标\"' 在命令行添加"), m.width)
+		msg := "本季度还没有目标"
+		hint := "用 'gt quarter add \"目标\"' 在命令行添加"
+		if m.quarterOffset != 0 {
+			msg = "该季度没有目标"
+			hint = "按 ←/→ 切换季度"
+		}
+		return wrapInContentBox(renderEmptyBody("🏆 季度目标", msg, hint), m.width)
 	}
 
 	if m.quarter.cursor >= len(quarterGoals) {
@@ -175,9 +186,19 @@ func (m Model) renderQuarterView() string {
 	}
 
 	var b strings.Builder
+	// 当前季度标注
+	marker := ""
+	if m.quarterOffset == 0 {
+		marker = lipgloss.NewStyle().Foreground(colorSuccess).Bold(true).Render("（当前）")
+	}
 	title := lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("🏆 %s 季度目标", util.QuarterLabel(y, q)))
 	count := mutedStr(fmt.Sprintf("（%d 项）", len(quarterGoals)))
-	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Left, title, " ", count) + "\n\n")
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Left, title, count, marker) + "\n\n")
+
+	// 全年分布统计（方案C）：让"其他季度有目标"可见
+	if dist := m.quarterYearDistribution(y); dist != "" {
+		b.WriteString(mutedStr("  全年分布：" + dist) + "\n\n")
+	}
 
 	for i, qg := range quarterGoals {
 		selected := i == m.quarter.cursor

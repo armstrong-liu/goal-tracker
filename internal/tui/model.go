@@ -60,6 +60,11 @@ type Model struct {
 	// 详情面板：Enter 打开，Esc 关闭
 	showDetail bool
 
+	// 周/季度导航偏移：0 = 当前，-1 = 上一周/季度，+1 = 下一周/季度
+	// 用 ←/→ 键切换，避免"当前期之外的目标隐身"
+	weekOffset    int
+	quarterOffset int
+
 	// 消息（短暂提示，操作后显示）
 	message string
 }
@@ -154,6 +159,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// 光标下移上限由视图数据条数决定（view 渲染时处理）
 			m.curState().cursor++
 			m.message = ""
+		case "left", "h":
+			// 周/季视图：切换到上一周/上一季度，光标归零
+			if m.activeTab == tabWeek {
+				m.weekOffset--
+				m.week.cursor = 0
+				m.message = ""
+			} else if m.activeTab == tabQuarter {
+				m.quarterOffset--
+				m.quarter.cursor = 0
+				m.message = ""
+			}
+		case "right", "l":
+			// 周/季视图：切换到下一周/下一季度，光标归零
+			if m.activeTab == tabWeek {
+				m.weekOffset++
+				m.week.cursor = 0
+				m.message = ""
+			} else if m.activeTab == tabQuarter {
+				m.quarterOffset++
+				m.quarter.cursor = 0
+				m.message = ""
+			}
 		case " ":
 			return m.handleToggle()
 		case "enter":
@@ -288,7 +315,15 @@ func (m Model) renderStatusBar() string {
 	case m.showDetail:
 		hint = "[Esc/Enter/任意键] 关闭详情"
 	case m.mode == inputNone:
-		hint = "[j/k]移动  [Space]完成  [Enter]详情  [a]添加  [x]删除  [Tab]切换  [?]帮助  [q]退出"
+		// 周/季视图额外显示切换提示
+		nav := ""
+		switch m.activeTab {
+		case tabWeek:
+			nav = "  [←/→]切换周"
+		case tabQuarter:
+			nav = "  [←/→]切换季度"
+		}
+		hint = "[j/k]移动  [Space]完成  [Enter]详情  [a]添加  [x]删除" + nav + "  [Tab]切换  [?]帮助  [q]退出"
 	default:
 		hint = "[Enter]确认  [Esc]取消"
 	}
